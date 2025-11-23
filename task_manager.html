@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task Manager Prototype</title>
+<style>
+  /* Tailwind-like minimal CSS for mobile-first */
+  body { font-family: sans-serif; background:#f0f0f0; margin:0; padding:1rem; }
+  .card { background:#fff; border-radius:0.5rem; padding:1rem; margin-bottom:1rem; }
+  button { padding:0.5rem 1rem; border-radius:0.25rem; border:1px solid #ccc; background:#eee; cursor:pointer; }
+  input, select { padding:0.5rem; margin-bottom:0.5rem; width:100%; box-sizing:border-box; }
+  img, video { max-width:100%; border-radius:0.25rem; margin-top:0.5rem; }
+  .flex { display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap; }
+  .gap-2 { gap:0.5rem; }
+  .text-xs { font-size:0.75rem; }
+  .text-sm { font-size:0.875rem; }
+  .font-medium { font-weight:500; }
+  .rounded { border-radius:0.25rem; }
+  .border { border:1px solid #ccc; }
+</style>
+</head>
+<body>
+
+<h1 class="text-sm font-medium">Task Manager Prototype (HTML)</h1>
+
+<div id="authPanel" class="card"></div>
+<div id="taskForm" class="card" style="display:none;"></div>
+<div id="taskList" class="card"></div>
+<div id="taskDetail" class="card" style="display:none;"></div>
+
+<script>
+/* Simple localStorage-based Task Manager Prototype */
+
+const STORAGE = {
+  USERS: "tm_users",
+  CURRENT: "tm_current",
+  TASKS: "tm_tasks"
+};
+
+const ROLES = ["Admin","Lead","Member","Viewer"];
+const STATUSES = ["New","Received","Submitted","Redo","Completed","Archived"];
+
+function uid(prefix="id"){return prefix+"_"+Math.random().toString(36).slice(2,9);}
+function nowISO(){return new Date().toISOString();}
+function readStorage(k,fallback){try{return JSON.parse(localStorage.getItem(k))||fallback}catch(e){return fallback;}}
+function writeStorage(k,v){localStorage.setItem(k,JSON.stringify(v));}
+
+// --- Ensure default admin ---
+(function(){let u=readStorage(STORAGE.USERS,[]);if(!u.find(x=>x.role==="Admin")){u.push({id:uid("user"),name:"admin",role:"Admin",token:"admin-token"});writeStorage(STORAGE.USERS,u);}})();
+
+let users=readStorage(STORAGE.USERS,[]);
+let tasks=readStorage(STORAGE.TASKS,[]);
+let current=readStorage(STORAGE.CURRENT,null);
+
+function save(){writeStorage(STORAGE.USERS,users);writeStorage(STORAGE.TASKS,tasks);writeStorage(STORAGE.CURRENT,current);}
+
+function login(token){
+  const u=users.find(x=>x.token===token);
+  if(u){current={userId:u.id,token};save(); renderAuth(); renderTaskList(); return true;}
+  alert("Token not found"); return false;
+}
+
+function logout(){current=null;save(); renderAuth(); renderTaskList();}
+
+function currentUser(){return current?users.find(u=>u.id===current.userId):null;}
+
+function createUser(name,role){
+  const token=name+"-"+Math.random().toString(36).slice(2,8);
+  const u={id:uid("user"),name,role,token};
+  users.push(u); save(); renderAuth(); return u;
+}
+
+// --- Task functions ---
+function createTask(data){
+  if(!data.createdPhoto){alert("Photo required"); return;}
+  const t={id:uid("task"),title:data.title||null,status:"New",
+           labels:{video:!!data.labels?.video},willReceiveOn:data.willReceiveOn||null,
+           requireSets:data.requireSets||1,createdPhoto:data.createdPhoto,uploads:[data.createdPhoto],
+           doneBy:null,createdBy:currentUser()?currentUser().name:"anon",createdAt:nowISO(),
+           history:[{at:nowISO(),by:currentUser()?currentUser().name:"system",action:"Created"}]};
+  tasks.unshift(t); save(); renderTaskList(); return t;
+}
+
+function addUpload(taskId,file){
+  const reader=new FileReader();
+  reader.onload=e=>{
+    const kind=file.type.startsWith("video/")?"video":"image";
+    const upload={id:uid("up"),url:e.target.result,kind,by:currentUser()?currentUser().name:"anon"};
+    tasks=tasks.map(t=>t.id===taskId?{...t,uploads:[...t.uploads,upload]}:t); save(); renderTaskList();
+  };
+  reader.readAsDataURL(file);
+}
+
+function transition(taskId,toStatus){
+  let t=tasks.find(x=>x.id===taskId);
+  if(!t) return;
+  const role=currentUser()?.role;
+  if(toStatus==="Submitted" && t.labels.video && !t.uploads.some(u=>u.kind==="video")){alert("Requires at least 1 video upload"); return;}
+  if(t.status==="Received" && toStatus==="Submitted") t.doneBy=currentUser()?.name||null;
+  t.status=toStatus; t.history.unshift({at:nowISO(),by:currentUser()?.name||"anon",action:`${t.status} → ${toStatus}`}); save(); renderTaskList();
+}
+
+// --- Render functions ---
+function renderAuth(){
+  const panel=document.getElementById("authPanel");
+  const u=currentUser();
+  panel.innerHTML=`<div>${u?`Logged in as ${u.name} (${u.role}) <button onclick="logout()">Logout</button>`:
+  `<input id="token" placeholder="Token"><button onclick="login(document.getElementById('token').value)">Login</button>`}</div>
+  <div style="margin-top:0.5rem;">Users: ${users.map(u=>`${u.name}(${u.role})`).join(", ")}</div>
+  `;
+}
+
+function renderTaskList(){
+  const container=document.getElementById("taskList");
+  container.innerHTML="";
+  tasks.forEach(t=>{
+    const div=document.createElement("div"); div.className="card";
+    div.innerHTML=`<b>${t.title||'(no title)'}</b> | ${t.status}<br>
+                   By ${t.createdBy} | Done By: ${t.doneBy||'-'}<br>
+                   <img src="${t.createdPhoto.url}" style="width:100px;height:60px"><br>
+                   <button onclick='openDetail("${t.id}")'>Open</button>`;
+    container.appendChild(div);
+  });
+}
+
+function openDetail(taskId){
+  const t=tasks.find(x=>x.id===taskId); if(!t) return;
+  const detail=document.getElementById("taskDetail"); detail.style.display="block";
+  detail.innerHTML=`<button onclick="closeDetail()">Back</button><h3>${t.title||'(no title)'}</h3>
+    Status: ${t.status}<br>Created by ${t.createdBy}<br>
+    <img src="${t.createdPhoto.url}" style="width:200px;height:120px"><br>
+    <input type="file" id="uploadFile"><button onclick='addUpload("${taskId}",document.getElementById("uploadFile").files[0])'>Upload</button><br>
+    <button onclick='transition("${taskId}","Received")'>Receive</button>
+    <button onclick='transition("${taskId}","Submitted")'>Submit</button>
+    <button onclick='transition("${taskId}","Redo")'>Redo</button>
+    <button onclick='transition("${taskId}","Completed")'>Complete</button>
+    <button onclick='transition("${taskId}","Archived")'>Archive</button>
+  `;
+}
+
+function closeDetail(){document.getElementById("taskDetail").style.display="none";}
+
+renderAuth();
+renderTaskList();
+
+</script>
+
+</body>
+</html>
